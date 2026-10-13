@@ -30,6 +30,7 @@ pub mod ocr;
 pub mod optimizer;
 pub mod print_raster;
 pub mod printcheck;
+pub mod read_aloud;
 mod scan_colours;
 mod scan_fields;
 pub mod signature_image;
@@ -39,6 +40,7 @@ mod text_preview;
 pub mod word_count;
 pub mod xfa;
 
+pub use read_aloud::{ReadAloudChunk, ReadAloudKind};
 pub use signature_image::{ImageSignaturePreview, SignatureImage};
 pub use signature_scan::{PhotoRect, ScanError, SignaturePhoto, Turn};
 pub use text_preview::TextEditPreview;
