@@ -263,7 +263,10 @@ fn reading_mode_label(mode: &str) -> &'static str {
 /// Preferences: interface language and size, appearance, identity and JavaScript. Returns `true` to close.
 pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     ui.label(egui::RichText::new(tl!("Preferences")).font(theme::semibold(18.0)));
-    ui.horizontal(|ui| {
+    ui.add_space(8.0);
+    let max = (ui.ctx().content_rect().height() - 120.0).max(200.0);
+    egui::ScrollArea::vertical().max_height(max).auto_shrink([false, false]).show(ui, |ui| {
+        ui.horizontal(|ui| {
         ui.label(tl!("Interface language"));
         let selected = crate::i18n::Lang::from_code(&app.language).map_or(tl!("Auto"), crate::i18n::Lang::name);
         let before = app.language.clone();
@@ -488,6 +491,7 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
                 .small()
                 .color(t.text_muted),
         );
+    });
     });
     ui.add_space(10.0);
     buttons(ui, tl!("OK"), &[]).is_some()

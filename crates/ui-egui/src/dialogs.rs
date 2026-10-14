@@ -79,6 +79,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
             Dialog::Print => 820.0,
             Dialog::FieldProps | Dialog::BulkFieldProps => 600.0,
             Dialog::About => 780.0,
+            Dialog::Preferences => 600.0,
             _ => 520.0,
         });
         match dialog {
@@ -904,9 +905,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 return;
             }
             Dialog::Preferences => {
-                // The settings outgrow a short window: scroll them rather than run off the screen.
-                let max = (ui.ctx().content_rect().height() - 120.0).max(200.0);
-                close = egui::ScrollArea::vertical().max_height(max).show(ui, |ui| crate::js_ui::preferences_body(ui, app, &t)).inner;
+                close = crate::js_ui::preferences_body(ui, app, &t);
                 return;
             }
             Dialog::RecognizeText => {
