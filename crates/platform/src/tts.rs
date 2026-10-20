@@ -341,10 +341,6 @@ pub fn stop() -> Result<(), TtsError> {
 
     #[cfg(unix)]
     {
-        #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-        if guard.backend == Some(ActiveBackend::SpdSay) {
-            let _ = std::process::Command::new("spd-say").arg("--cancel").output();
-        }
         if let Some(mut child) = guard.child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -487,13 +483,24 @@ fn speak_windows(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
         .name("pdfcraft-winrt-tts".into())
         .spawn(move || {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            let fail = || {
+                let mut guard = match state().lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                if guard.generation == current_gen {
+                    guard.status = SpeechStatus::Idle;
+                    guard.current_text = None;
+                }
+            };
+
             loop {
                 {
                     let guard = match state().lock() {
                         Ok(g) => g,
                         Err(p) => p.into_inner(),
                     };
-                    if guard.generation != current_gen || guard.status != SpeechStatus::Speaking {
+                    if guard.generation != current_gen {
                         let _ = op.Cancel();
                         return;
                     }
@@ -504,27 +511,13 @@ fn speak_windows(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
                     Ok(AsyncStatus::Started) => {
                         if std::time::Instant::now() > deadline {
                             let _ = op.Cancel();
-                            let mut guard = match state().lock() {
-                                Ok(g) => g,
-                                Err(p) => p.into_inner(),
-                            };
-                            if guard.generation == current_gen {
-                                guard.status = SpeechStatus::Idle;
-                                guard.current_text = None;
-                            }
+                            fail();
                             return;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(15));
                     }
                     _ => {
-                        let mut guard = match state().lock() {
-                            Ok(g) => g,
-                            Err(p) => p.into_inner(),
-                        };
-                        if guard.generation == current_gen {
-                            guard.status = SpeechStatus::Idle;
-                            guard.current_text = None;
-                        }
+                        fail();
                         return;
                     }
                 }
@@ -533,34 +526,20 @@ fn speak_windows(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
             let stream = match op.GetResults() {
                 Ok(s) => s,
                 Err(_) => {
-                    let mut guard = match state().lock() {
-                        Ok(g) => g,
-                        Err(p) => p.into_inner(),
-                    };
-                    if guard.generation == current_gen {
-                        guard.status = SpeechStatus::Idle;
-                        guard.current_text = None;
-                    }
+                    fail();
                     return;
                 }
             };
             let content_type = match stream.ContentType() {
                 Ok(ct) => ct,
-                Err(_) => return,
+                Err(_) => return fail(),
             };
             let source = match MediaSource::CreateFromStream(&stream, &content_type) {
                 Ok(s) => s,
-                Err(_) => return,
+                Err(_) => return fail(),
             };
-            if player.SetSource(&source).is_err() || player.Play().is_err() {
-                let mut guard = match state().lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                if guard.generation == current_gen {
-                    guard.status = SpeechStatus::Idle;
-                    guard.current_text = None;
-                }
+            if player.SetSource(&source).is_err() {
+                fail();
                 return;
             }
 
@@ -568,7 +547,14 @@ fn speak_windows(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
                 Ok(g) => g,
                 Err(p) => p.into_inner(),
             };
-            if guard.generation == current_gen && guard.status == SpeechStatus::Speaking {
+            if guard.generation == current_gen {
+                if guard.status == SpeechStatus::Paused {
+                    let _ = player.Pause();
+                } else if player.Play().is_err() {
+                    guard.status = SpeechStatus::Idle;
+                    guard.current_text = None;
+                    return;
+                }
                 guard.win_player = Some(WindowsTtsPlayer {
                     player,
                     synthesizer,
@@ -621,27 +607,30 @@ fn list_macos_voices() -> Vec<Voice> {
 }
 
 #[cfg(target_os = "macos")]
-/// Build macOS /usr/bin/say command with explicit argument delimiter to avoid option injection.
-fn build_say_command(text: &str, options: &SpeechOptions) -> std::process::Command {
+/// Build macOS /usr/bin/say command reading text from standard input (-f -).
+fn build_say_command(options: &SpeechOptions) -> std::process::Command {
     let mut cmd = std::process::Command::new("say");
     if let Some(v) = &options.voice {
         cmd.arg("-v").arg(v);
     }
     let wpm = (175.0 * options.rate.clamp(0.5, 3.0)).round() as u32;
     cmd.arg("-r").arg(wpm.to_string());
-    // Security: pass "--" so text beginning with options like "-o/path" cannot overwrite files.
-    cmd.arg("--");
-    cmd.arg(text);
+    cmd.arg("-f").arg("-");
+    cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
     cmd
 }
 
 #[cfg(target_os = "macos")]
-/// Speak text on macOS using /usr/bin/say.
+/// Speak text on macOS using /usr/bin/say with text delivered via stdin.
 fn speak_macos(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
-    let mut cmd = build_say_command(text, options);
-    let child = cmd.spawn().map_err(|e| TtsError::Failed(format!("could not spawn say process: {e}")))?;
+    use std::io::Write;
+    let mut cmd = build_say_command(options);
+    let mut child = cmd.spawn().map_err(|e| TtsError::Failed(format!("could not spawn say process: {e}")))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
 
     let mut guard = match state().lock() {
         Ok(g) => g,
@@ -668,8 +657,8 @@ fn list_linux_voices() -> Vec<Voice> {
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Build Linux spd-say command with -w flag to track playback and explicit argument delimiter.
-fn build_spd_say_command(text: &str, options: &SpeechOptions) -> std::process::Command {
+/// Build Linux spd-say command with -w flag and reading text from standard input (-e).
+fn build_spd_say_command(options: &SpeechOptions) -> std::process::Command {
     let mut cmd = std::process::Command::new("spd-say");
     cmd.arg("-w");
     let rate_pct = (((options.rate.clamp(0.5, 2.0) - 1.0) * 100.0).round() as i32).clamp(-100, 100);
@@ -679,35 +668,37 @@ fn build_spd_say_command(text: &str, options: &SpeechOptions) -> std::process::C
     if let Some(v) = &options.voice {
         cmd.arg("-t").arg(v);
     }
-    // Security: pass "--" to prevent interpreting text as flags.
-    cmd.arg("--");
-    cmd.arg(text);
+    cmd.arg("-e");
+    cmd.stdin(std::process::Stdio::piped());
     cmd
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Build Linux espeak fallback command with explicit argument delimiter.
-fn build_espeak_command(text: &str) -> std::process::Command {
+/// Build Linux espeak fallback command reading text from standard input (--stdin).
+fn build_espeak_command() -> std::process::Command {
     let mut espeak = std::process::Command::new("espeak");
-    // Security: pass "--" to prevent interpreting text as flags (e.g. -w/path).
-    espeak.arg("--");
-    espeak.arg(text);
+    espeak.arg("--stdin");
+    espeak.stdin(std::process::Stdio::piped());
     espeak
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Speak text on Linux using speech-dispatcher (spd-say) or espeak fallback.
+/// Speak text on Linux using speech-dispatcher (spd-say) or espeak fallback via stdin.
 fn speak_linux(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
-    let mut cmd = build_spd_say_command(text, options);
+    use std::io::Write;
+    let mut cmd = build_spd_say_command(options);
 
-    let (child, backend) = match cmd.spawn() {
+    let (mut child, backend) = match cmd.spawn() {
         Ok(c) => (c, ActiveBackend::SpdSay),
         Err(_) => {
-            let mut espeak = build_espeak_command(text);
+            let mut espeak = build_espeak_command();
             let c = espeak.spawn().map_err(|e| TtsError::Failed(format!("neither spd-say nor espeak available: {e}")))?;
             (c, ActiveBackend::Espeak)
         }
     };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
 
     let mut guard = match state().lock() {
         Ok(g) => g,
@@ -761,29 +752,23 @@ mod tests {
     }
 
     #[test]
-    fn command_delimiters_prevent_option_injection() {
-        // Verify that command builders explicitly include "--" before the text argument
+    fn command_builders_use_stdin_modes() {
         #[cfg(target_os = "macos")]
         {
-            let cmd = build_say_command("-o/tmp/malicious.aiff", &SpeechOptions::default());
+            let cmd = build_say_command(&SpeechOptions::default());
             let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-            let dash_pos = args.iter().position(|a| a == "--");
-            assert!(dash_pos.is_some(), "say command must contain '--' delimiter");
-            let text_pos = args.iter().position(|a| a == "-o/tmp/malicious.aiff");
-            assert!(text_pos.is_some() && text_pos.unwrap() > dash_pos.unwrap());
+            assert!(args.contains(&"-f".to_string()) && args.contains(&"-".to_string()));
         }
 
         #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
         {
-            let cmd = build_spd_say_command("-o/tmp/malicious.wav", &SpeechOptions::default());
+            let cmd = build_spd_say_command(&SpeechOptions::default());
             let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-            let dash_pos = args.iter().position(|a| a == "--");
-            assert!(dash_pos.is_some(), "spd-say command must contain '--' delimiter");
+            assert!(args.contains(&"-e".to_string()), "spd-say command must use -e for stdin");
 
-            let espeak = build_espeak_command("-w/tmp/malicious.wav");
+            let espeak = build_espeak_command();
             let espeak_args: Vec<String> = espeak.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-            let espeak_dash = espeak_args.iter().position(|a| a == "--");
-            assert!(espeak_dash.is_some(), "espeak command must contain '--' delimiter");
+            assert!(espeak_args.contains(&"--stdin".to_string()), "espeak command must use --stdin");
         }
     }
 }

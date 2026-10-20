@@ -73,8 +73,8 @@ impl Document {
             }
         }
 
-        // 3. Fallback: extract page text through the rendering pool if no chunks were found yet
-        if chunks.is_empty() {
+        // 3. Fallback: extract page text through the rendering pool if no text chunks were found yet
+        if !chunks.iter().any(|c| matches!(c.kind, ReadAloudKind::Paragraph | ReadAloudKind::Heading(_))) {
             let mut renderer = pdfcraft_render::PageRenderer::new(self.display.clone(), self.config.clone());
             let res =
                 renderer.render(pdfcraft_render::RenderRequest { page, kind: pdfcraft_render::RequestKind::Text, scale: 1.0, ..Default::default() });
@@ -89,10 +89,10 @@ impl Document {
             }
         }
 
-        // 4. Form fields on this page (excluding sensitive values for password fields)
+        // 4. Form fields on this page (excluding sensitive values for password fields and skipping hidden widgets)
         for field in self.form.iter() {
             for widget in &field.widgets {
-                if widget.page == Some(page) {
+                if widget.page == Some(page) && !widget.hidden {
                     let desc = field.tooltip.as_deref().unwrap_or(&field.name);
                     let is_password = field.has(pdfcraft_forms::flags::PASSWORD);
                     let text = if is_password {

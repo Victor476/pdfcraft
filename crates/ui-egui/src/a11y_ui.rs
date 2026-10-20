@@ -720,6 +720,7 @@ pub struct ReadAloudController {
     pub paused_word_idx: usize,
     pub resume_word_offset: usize,
     pub voices: Option<Vec<pdfcraft_platform::Voice>>,
+    pub last_error: Option<String>,
 }
 
 impl ReadAloudController {
@@ -758,7 +759,12 @@ impl ReadAloudController {
             self.paused = false;
             self.resume_word_offset = 0;
             self.chunk_started_at = Some(std::time::Instant::now());
-            let _ = pdfcraft_platform::tts::speak(&chunk.text, &self.options);
+            if let Err(e) = pdfcraft_platform::tts::speak(&chunk.text, &self.options) {
+                self.speaking = false;
+                self.last_error = Some(e.to_string());
+            } else {
+                self.last_error = None;
+            }
         } else {
             self.speaking = false;
         }
@@ -814,7 +820,12 @@ impl ReadAloudController {
                         self.paused = false;
                         self.resume_word_offset = self.paused_word_idx;
                         self.chunk_started_at = Some(std::time::Instant::now());
-                        let _ = pdfcraft_platform::tts::speak(&remaining, &self.options);
+                        if let Err(e) = pdfcraft_platform::tts::speak(&remaining, &self.options) {
+                            self.speaking = false;
+                            self.last_error = Some(e.to_string());
+                        } else {
+                            self.last_error = None;
+                        }
                         return;
                     }
                 }
@@ -949,13 +960,16 @@ pub fn read_aloud_floating_bar(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                 }
                             }
 
-                            let total_pages = app.active.and_then(|i| app.session.get(app.views[i].id)).map_or(0, |d| d.info.pages.len());
+                            let view_idx =
+                                app.read_aloud.doc_id.and_then(|id| app.views.iter().position(|v| v.id == id)).or(app.active);
+                            let total_pages =
+                                view_idx.and_then(|i| app.session.get(app.views[i].id)).map_or(0, |d| d.info.pages.len());
                             let has_prev = app.read_aloud.current_page > 0;
                             let has_next = app.read_aloud.current_page + 1 < total_pages;
 
                             if icons::button(ui, "chevron-left", 24.0, false, tl!("Previous page")).clicked() && has_prev {
                                 let prev = app.read_aloud.current_page - 1;
-                                if let Some(i) = app.active {
+                                if let Some(i) = view_idx {
                                     app.views[i].current = prev;
                                     app.views[i].goto = Some((prev, 0.0));
                                     app.read_aloud.current_page = prev;
@@ -969,7 +983,7 @@ pub fn read_aloud_floating_bar(app: &mut PdfCraftApp, ctx: &egui::Context) {
 
                             if icons::button(ui, "chevron-right", 24.0, false, tl!("Next page")).clicked() && has_next {
                                 let next = app.read_aloud.current_page + 1;
-                                if let Some(i) = app.active {
+                                if let Some(i) = view_idx {
                                     app.views[i].current = next;
                                     app.views[i].goto = Some((next, 0.0));
                                     app.read_aloud.current_page = next;
@@ -1141,7 +1155,11 @@ pub fn read_aloud_options_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
             } else {
                 "PdfCraft reading test."
             };
-            let _ = pdfcraft_platform::tts::speak(test_phrase, opts);
+            if let Err(e) = pdfcraft_platform::tts::speak(test_phrase, opts) {
+                app.read_aloud.last_error = Some(e.to_string());
+            } else {
+                app.read_aloud.last_error = None;
+            }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::pill_button(ui, tl!("OK"), true).clicked() {
