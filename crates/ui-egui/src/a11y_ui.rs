@@ -721,6 +721,7 @@ pub struct ReadAloudController {
     pub resume_word_offset: usize,
     pub voices: Option<Vec<pdfcraft_platform::Voice>>,
     pub last_error: Option<String>,
+    pub draft_options: Option<pdfcraft_platform::SpeechOptions>,
 }
 
 impl ReadAloudController {
@@ -742,6 +743,7 @@ impl ReadAloudController {
         self.chunk_index = 0;
         self.paused_word_idx = 0;
         self.resume_word_offset = 0;
+        self.draft_options = None;
         let _ = pdfcraft_platform::tts::stop();
     }
 
@@ -1095,7 +1097,7 @@ pub fn read_aloud_options_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     ui.add_space(8.0);
 
     let voices = app.read_aloud.get_voices().to_vec();
-    let opts = &mut app.read_aloud.options;
+    let mut opts = app.read_aloud.draft_options.clone().unwrap_or_else(|| app.read_aloud.options.clone());
 
     let group = |ui: &mut egui::Ui, title: &str, body: &mut dyn FnMut(&mut egui::Ui)| {
         ui.label(egui::RichText::new(tl!(title)).font(theme::semibold(13.0)));
@@ -1155,7 +1157,7 @@ pub fn read_aloud_options_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
             } else {
                 "PdfCraft reading test."
             };
-            if let Err(e) = pdfcraft_platform::tts::speak(test_phrase, opts) {
+            if let Err(e) = pdfcraft_platform::tts::speak(test_phrase, &opts) {
                 app.read_aloud.last_error = Some(e.to_string());
             } else {
                 app.read_aloud.last_error = None;
@@ -1163,13 +1165,20 @@ pub fn read_aloud_options_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::pill_button(ui, tl!("OK"), true).clicked() {
+                app.read_aloud.options = opts.clone();
+                app.read_aloud.draft_options = None;
                 ok = true;
             }
             if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
+                app.read_aloud.draft_options = None;
                 cancel = true;
             }
         });
     });
+
+    if !ok && !cancel {
+        app.read_aloud.draft_options = Some(opts);
+    }
 
     (ok, cancel)
 }

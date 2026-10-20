@@ -623,14 +623,20 @@ fn build_say_command(options: &SpeechOptions) -> std::process::Command {
 }
 
 #[cfg(target_os = "macos")]
-/// Speak text on macOS using /usr/bin/say with text delivered via stdin.
+/// Speak text on macOS using /usr/bin/say with text delivered via stdin asynchronously.
 fn speak_macos(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
     use std::io::Write;
     let mut cmd = build_say_command(options);
     let mut child = cmd.spawn().map_err(|e| TtsError::Failed(format!("could not spawn say process: {e}")))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
-    }
+    let child_stdin = child.stdin.take();
+    let text_owned = text.to_string();
+    let _ = std::thread::Builder::new()
+        .name("pdfcraft-tts-stdin".into())
+        .spawn(move || {
+            if let Some(mut stdin) = child_stdin {
+                let _ = stdin.write_all(text_owned.as_bytes());
+            }
+        });
 
     let mut guard = match state().lock() {
         Ok(g) => g,
@@ -657,7 +663,7 @@ fn list_linux_voices() -> Vec<Voice> {
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Build Linux spd-say command with -w flag and reading text from standard input (-e).
+/// Build Linux spd-say command with -w flag, reading text from standard input (-e), and silenced outputs.
 fn build_spd_say_command(options: &SpeechOptions) -> std::process::Command {
     let mut cmd = std::process::Command::new("spd-say");
     cmd.arg("-w");
@@ -670,20 +676,24 @@ fn build_spd_say_command(options: &SpeechOptions) -> std::process::Command {
     }
     cmd.arg("-e");
     cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
     cmd
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Build Linux espeak fallback command reading text from standard input (--stdin).
+/// Build Linux espeak fallback command reading text from standard input (--stdin) with silenced outputs.
 fn build_espeak_command() -> std::process::Command {
     let mut espeak = std::process::Command::new("espeak");
     espeak.arg("--stdin");
     espeak.stdin(std::process::Stdio::piped());
+    espeak.stdout(std::process::Stdio::null());
+    espeak.stderr(std::process::Stdio::null());
     espeak
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
-/// Speak text on Linux using speech-dispatcher (spd-say) or espeak fallback via stdin.
+/// Speak text on Linux using speech-dispatcher (spd-say) or espeak fallback via async stdin.
 fn speak_linux(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
     use std::io::Write;
     let mut cmd = build_spd_say_command(options);
@@ -696,9 +706,15 @@ fn speak_linux(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
             (c, ActiveBackend::Espeak)
         }
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
-    }
+    let child_stdin = child.stdin.take();
+    let text_owned = text.to_string();
+    let _ = std::thread::Builder::new()
+        .name("pdfcraft-tts-stdin".into())
+        .spawn(move || {
+            if let Some(mut stdin) = child_stdin {
+                let _ = stdin.write_all(text_owned.as_bytes());
+            }
+        });
 
     let mut guard = match state().lock() {
         Ok(g) => g,
