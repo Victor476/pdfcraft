@@ -687,6 +687,16 @@ impl Document {
         if self.allows_copying() { Ok(()) } else { Err(EditError::NotPermitted("copying text and images")) }
     }
 
+    /// Assistive technology extraction is allowed (Table 22, bit 10).
+    pub fn allows_accessibility(&self) -> bool {
+        self.permissions().is_none_or(|p| p.extract_for_accessibility())
+    }
+
+    /// [`Self::allows_accessibility`], as the error to report when it isn't.
+    pub fn check_accessibility(&self) -> Result<(), EditError> {
+        if self.allows_accessibility() { Ok(()) } else { Err(EditError::NotPermitted("accessibility extraction")) }
+    }
+
     /// Page changes (insert, delete, rotate, move, extract) are allowed.
     pub fn allows_assembly(&self) -> bool {
         self.editable() && self.permissions().is_none_or(|p| p.assemble())

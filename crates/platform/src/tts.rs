@@ -595,11 +595,17 @@ fn list_macos_voices() -> Vec<Voice> {
     let text = String::from_utf8_lossy(&output);
     let mut voices = Vec::new();
     for line in text.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 {
-            let name = parts[0].to_string();
-            let lang = parts[1].replace('_', "-");
-            voices.push(Voice { id: name.clone(), name, language: lang, gender: None });
+        let head = line.split('#').next().unwrap_or("").trim_end();
+        if let Some((name, lang)) = head.rsplit_once(char::is_whitespace) {
+            let name = name.trim();
+            if !name.is_empty() {
+                voices.push(Voice {
+                    id: name.to_string(),
+                    name: name.to_string(),
+                    language: lang.replace('_', "-"),
+                    gender: None,
+                });
+            }
         }
     }
 
@@ -659,7 +665,26 @@ fn speak_macos(text: &str, options: &SpeechOptions) -> Result<(), TtsError> {
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
 /// Enumerate available Linux speech voices.
 fn list_linux_voices() -> Vec<Voice> {
-    default_mock_voices()
+    let output = match std::process::Command::new("spd-say").arg("-L").output() {
+        Ok(out) if out.status.success() => out.stdout,
+        _ => return Vec::new(),
+    };
+
+    let text = String::from_utf8_lossy(&output);
+    let mut voices = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || (idx == 0 && line.to_uppercase().starts_with("NAME")) {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if !parts.is_empty() {
+            let name = parts[0].to_string();
+            let lang = parts.get(1).map(|s| s.replace('_', "-")).unwrap_or_else(|| "en".to_string());
+            voices.push(Voice { id: name.clone(), name, language: lang, gender: None });
+        }
+    }
+    voices
 }
 
 #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
@@ -672,7 +697,7 @@ fn build_spd_say_command(options: &SpeechOptions) -> std::process::Command {
     cmd.arg("-r").arg(rate_pct.to_string());
     cmd.arg("-p").arg(pitch_pct.to_string());
     if let Some(v) = &options.voice {
-        cmd.arg("-t").arg(v);
+        cmd.arg("-y").arg(v);
     }
     cmd.arg("-e");
     cmd.stdin(std::process::Stdio::piped());
@@ -778,9 +803,12 @@ mod tests {
 
         #[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
         {
-            let cmd = build_spd_say_command(&SpeechOptions::default());
+            let opts = SpeechOptions { voice: Some("test-voice".into()), ..Default::default() };
+            let cmd = build_spd_say_command(&opts);
             let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
             assert!(args.contains(&"-e".to_string()), "spd-say command must use -e for stdin");
+            assert!(args.contains(&"-y".to_string()), "spd-say command must use -y for synthesis voice");
+            assert!(args.contains(&"test-voice".to_string()), "spd-say command must pass selected voice");
 
             let espeak = build_espeak_command();
             let espeak_args: Vec<String> = espeak.get_args().map(|a| a.to_string_lossy().to_string()).collect();

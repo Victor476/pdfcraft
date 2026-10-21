@@ -157,5 +157,5 @@ sync_github_name = false
 [people.Victor476]
 real_name = "Victor Angelo"
 display_name = "Victor Angelo"
-sync_github_name = true
+sync_github_name = false
 

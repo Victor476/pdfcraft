@@ -576,6 +576,7 @@ impl Automation {
     /// Read PDF content out loud using platform text-to-speech.
     pub(crate) fn read_aloud(&mut self, a: &Args) -> Result<Value> {
         let doc = self.doc(a)?;
+        doc.check_accessibility().map_err(failed)?;
         let action = a.opt_str("action")?.unwrap_or("page");
         let total_pages = doc.info.pages.len();
 
@@ -595,13 +596,16 @@ impl Automation {
                 let chunks = doc.read_aloud_page(page_idx);
                 let text = doc.read_aloud_text(page_idx);
                 pdfcraft_platform::tts::speak(&text, &options).map_err(|e| failed(e.to_string()))?;
-                Ok(json!({
+                let mut out = json!({
                     "action": "page",
                     "page": page_idx + 1,
                     "chunks_count": chunks.len(),
-                    "text": text,
                     "status": "speaking"
-                }))
+                });
+                if doc.check_copying().is_ok() {
+                    out["text"] = json!(text);
+                }
+                Ok(out)
             }
             "document" => {
                 let from_page = match a.opt_int("page")? {
@@ -646,7 +650,11 @@ impl Automation {
                     let chunks = doc.read_aloud_page(0);
                     let text = doc.read_aloud_text(0);
                     pdfcraft_platform::tts::speak(&text, &options).map_err(|e| failed(e.to_string()))?;
-                    Ok(json!({ "action": "toggle", "status": "speaking", "page": 1, "chunks_count": chunks.len() }))
+                    let mut out = json!({ "action": "toggle", "status": "speaking", "page": 1, "chunks_count": chunks.len() });
+                    if doc.check_copying().is_ok() {
+                        out["text"] = json!(text);
+                    }
+                    Ok(out)
                 } else {
                     pdfcraft_platform::tts::stop().map_err(|e| failed(e.to_string()))?;
                     Ok(json!({ "action": "toggle", "status": "idle" }))
@@ -660,17 +668,20 @@ impl Automation {
 
     /// Get current speech playback status (idle, speaking, paused) and active text.
     pub(crate) fn read_aloud_status(&self, a: &Args) -> Result<Value> {
-        let _ = self.doc(a)?;
+        let doc = self.doc(a)?;
+        doc.check_accessibility().map_err(failed)?;
         let status = match pdfcraft_platform::tts::status() {
             pdfcraft_platform::SpeechStatus::Idle => "idle",
             pdfcraft_platform::SpeechStatus::Speaking => "speaking",
             pdfcraft_platform::SpeechStatus::Paused => "paused",
         };
-        let current_text = pdfcraft_platform::tts::current_text();
-        Ok(json!({
+        let mut out = json!({
             "status": status,
-            "current_text": current_text,
-        }))
+        });
+        if doc.check_copying().is_ok() {
+            out["current_text"] = json!(pdfcraft_platform::tts::current_text());
+        }
+        Ok(out)
     }
 
     /// List available text-to-speech voices on the host operating system.

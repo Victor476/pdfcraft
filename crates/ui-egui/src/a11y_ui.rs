@@ -938,6 +938,8 @@ pub fn read_aloud_floating_bar(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                 crate::i18n::fmt(tl!("Reading page {page}…"), &[("page", &page_display.to_string())])
                             } else if app.read_aloud.paused {
                                 crate::i18n::fmt(tl!("Paused (page {page})"), &[("page", &page_display.to_string())])
+                            } else if let Some(e) = app.read_aloud.last_error.as_deref() {
+                                e.to_string()
                             } else {
                                 tl!("Read Out Loud ready").to_string()
                             };
@@ -975,9 +977,19 @@ pub fn read_aloud_floating_bar(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                     app.views[i].current = prev;
                                     app.views[i].goto = Some((prev, 0.0));
                                     app.read_aloud.current_page = prev;
-                                    if app.read_aloud.speaking {
-                                        if let Some(doc) = app.session.get(app.views[i].id) {
-                                            app.read_aloud.start_page(doc, prev);
+                                    if let Some(doc) = app.session.get(app.views[i].id) {
+                                        if app.read_aloud.speaking {
+                                            if app.read_aloud.to_end {
+                                                app.read_aloud.start_document(doc, prev);
+                                            } else {
+                                                app.read_aloud.start_page(doc, prev);
+                                            }
+                                        } else if app.read_aloud.paused {
+                                            app.read_aloud.chunks = doc.read_aloud_page(prev);
+                                            app.read_aloud.chunk_index = 0;
+                                            app.read_aloud.paused_word_idx = 0;
+                                            app.read_aloud.resume_word_offset = 0;
+                                            app.read_aloud.chunk_started_at = None;
                                         }
                                     }
                                 }
@@ -989,9 +1001,19 @@ pub fn read_aloud_floating_bar(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                     app.views[i].current = next;
                                     app.views[i].goto = Some((next, 0.0));
                                     app.read_aloud.current_page = next;
-                                    if app.read_aloud.speaking {
-                                        if let Some(doc) = app.session.get(app.views[i].id) {
-                                            app.read_aloud.start_page(doc, next);
+                                    if let Some(doc) = app.session.get(app.views[i].id) {
+                                        if app.read_aloud.speaking {
+                                            if app.read_aloud.to_end {
+                                                app.read_aloud.start_document(doc, next);
+                                            } else {
+                                                app.read_aloud.start_page(doc, next);
+                                            }
+                                        } else if app.read_aloud.paused {
+                                            app.read_aloud.chunks = doc.read_aloud_page(next);
+                                            app.read_aloud.chunk_index = 0;
+                                            app.read_aloud.paused_word_idx = 0;
+                                            app.read_aloud.resume_word_offset = 0;
+                                            app.read_aloud.chunk_started_at = None;
                                         }
                                     }
                                 }

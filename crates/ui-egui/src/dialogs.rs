@@ -1392,6 +1392,9 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     // Protect / Remove security replace the Properties dialog.
     let replaces = link_command.is_some_and(|c| c.starts_with("protect.")) || open_revision.is_some();
     if modal.should_close() || close || replaces {
+        if dialog == Dialog::ReadAloudOptions {
+            app.read_aloud.draft_options = None;
+        }
         app.dialog = None;
         app.props_draft = None;
         app.view_draft = None;

@@ -470,6 +470,7 @@ impl PdfCraftApp {
                 self.read_aloud.stop();
             }
             "a11y.read_aloud.options" => {
+                self.read_aloud.draft_options = None;
                 self.dialog = Some(Dialog::ReadAloudOptions);
             }
             "export.all_images" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::AllImages)),

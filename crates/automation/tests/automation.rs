@@ -6873,6 +6873,7 @@ fn read_aloud_page_and_document() {
     assert_eq!(res["action"], "page");
     assert_eq!(res["page"], 1);
     assert_eq!(res["status"], "speaking");
+    assert!(res["text"].as_str().unwrap().contains("Page 1"));
 
     let spoken = pdfcraft_platform::tts::take_mock_spoken();
     assert!(!spoken.is_empty());
@@ -6905,6 +6906,7 @@ fn read_aloud_playback_controls() {
 
     let st = ok(&mut a, "read_aloud_status", json!({ "doc": doc }));
     assert_eq!(st["status"], "speaking");
+    assert_eq!(st["current_text"], "Testing playback controls");
 
     // Pause
     let res = ok(&mut a, "read_aloud", json!({ "doc": doc, "action": "pause" }));
